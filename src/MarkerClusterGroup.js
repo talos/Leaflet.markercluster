@@ -44,8 +44,10 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		this._nonPointGroup.on(L.FeatureGroup.EVENTS, this._propagateEvent, this);
 
 		this._inZoomAnimation = 0;
-		this._needsClustering = [];
-		this._needsRemoving = []; //Markers removed while we aren't on the map need to be kept track of
+		//this._needsClustering = [];
+		//this._needsRemoving = []; //Markers removed while we aren't on the map need to be kept track of
+		this._needsClustering = {};
+		this._needsRemoving = {};
 		//The bounds of the currently shown area (from _getExpandedVisibleBounds) Updated on zoom/move
 		this._currentShownBounds = null;
 	},
@@ -67,7 +69,11 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		}
 
 		if (!this._map) {
-			this._needsClustering.push(layer);
+			if (!layer._markerClusterId) {
+				layer._markerClusterId = this._generateLayerId();
+			}
+			this._needsClustering[layer._markerClusterId] = layer;
+			//this._needsClustering.push(layer);
 			return this;
 		}
 
@@ -112,8 +118,11 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		}
 
 		if (!this._map) {
-			if (!this._arraySplice(this._needsClustering, layer) && this.hasLayer(layer)) {
-				this._needsRemoving.push(layer);
+			//if (!this._arraySplice(this._needsClustering, layer) && this.hasLayer(layer)) {
+			if (layer._markerClusterId in this._needsClustering) {
+				delete this._needsClustering[layer._markerClusterId];
+			} else if (this.hasLayer(layer)) {
+				this._needsRemoving[layer._markerClusterId] = layer;
 			}
 			return this;
 		}
@@ -161,7 +170,11 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 			}
 
 			if (!onMap) {
-				this._needsClustering.push(m);
+				//this._needsClustering.push(m);
+				if (!m._markerClusterId) {
+					m._markerClusterId = this._generateLayerId();
+				}
+				this._needsClustering[m._markerClusterId] = m;
 				continue;
 			}
 
@@ -200,7 +213,8 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		if (!this._map) {
 			for (i = 0, l = layersArray.length; i < l; i++) {
 				m = layersArray[i];
-				this._arraySplice(this._needsClustering, m);
+				//this._arraySplice(this._needsClustering, m);
+				delete this._needsClustering[m._markerClusterId];
 				npg.removeLayer(m);
 			}
 			return this;
@@ -242,7 +256,8 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 
 		//If we aren't on the map (yet), blow away the markers we know of
 		if (!this._map) {
-			this._needsClustering = [];
+			//this._needsClustering = [];
+			this._needsClustering = {};
 			delete this._gridClusters;
 			delete this._gridUnclustered;
 		}
@@ -273,8 +288,13 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		if (this._topClusterLevel) {
 			bounds.extend(this._topClusterLevel._bounds);
 		} else {
-			for (var i = this._needsClustering.length - 1; i >= 0; i--) {
-				bounds.extend(this._needsClustering[i].getLatLng());
+			//for (var i = this._needsClustering.length - 1; i >= 0; i--) {
+			//	bounds.extend(this._needsClustering[i].getLatLng());
+			//}
+			for (var id in this._needsClustering) {
+				if (this._needsClustering.hasOwnProperty(id)) {
+					bounds.extend(this._needsClustering[id].getLatLng());
+				}
 			}
 		}
 
@@ -289,8 +309,15 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 
 	//Overrides LayerGroup.eachLayer
 	eachLayer: function (method, context) {
-		var markers = this._needsClustering.slice(),
+		//var markers = this._needsClustering.slice(),
+		var markers = [],
 		    i;
+
+		for (var id in this._needsClustering) {
+			if (this._needsClustering.hasOwnProperty(id)) {
+				markers.push(this._needsClustering[id]);
+			}
+		}
 
 		if (this._topClusterLevel) {
 			this._topClusterLevel.getAllChildMarkers(markers);
@@ -309,19 +336,27 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 			return false;
 		}
 
-		var i, anArray = this._needsClustering;
+		/*var i, anArray = this._needsClustering;
 
 		for (i = anArray.length - 1; i >= 0; i--) {
 			if (anArray[i] === layer) {
 				return true;
 			}
+		}*/
+
+		if (layer._markerClusterId in this._needsClustering) {
+			return true;
 		}
 
-		anArray = this._needsRemoving;
+		/*anArray = this._needsRemoving;
 		for (i = anArray.length - 1; i >= 0; i--) {
 			if (anArray[i] === layer) {
 				return false;
 			}
+		}*/
+
+		if (layer._markerClusterId in this._needsRemoving) {
+			return false;
 		}
 
 		return !!(layer.__parent && layer.__parent._group === this) || this._nonPointGroup.hasLayer(layer);
@@ -368,7 +403,8 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 	//Overrides FeatureGroup.onAdd
 	onAdd: function (map) {
 		this._map = map;
-		var i, l, layer;
+		//var i, l, layer;
+		var id, layer;
 
 		if (!isFinite(this._map.getMaxZoom())) {
 			throw "Map has no maxZoom specified";
@@ -381,28 +417,36 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 			this._generateInitialClusters();
 		}
 
-		for (i = 0, l = this._needsRemoving.length; i < l; i++) {
-			layer = this._needsRemoving[i];
-			this._removeLayer(layer);
-		}
-		this._needsRemoving = [];
-
-		for (i = 0, l = this._needsClustering.length; i < l; i++) {
-			layer = this._needsClustering[i];
-
-			//If the layer doesn't have a getLatLng then we can't cluster it, so add it to our child featureGroup
-			if (!layer.getLatLng) {
-				this._featureGroup.addLayer(layer);
-				continue;
+		//for (i = 0, l = this._needsRemoving.length; i < l; i++) {
+		for (id in this._needsRemoving) {
+			if (this._needsRemoving.hasOwnProperty(id)) {
+				layer = this._needsRemoving[id];
+				this._removeLayer(layer);
 			}
-
-
-			if (layer.__parent) {
-				continue;
-			}
-			this._addLayer(layer, this._maxZoom);
 		}
-		this._needsClustering = [];
+		//this._needsRemoving = [];
+		this._needsRemoving = {};
+
+		//for (i = 0, l = this._needsClustering.length; i < l; i++) {
+		for (id in this._needsClustering) {
+			if (this._needsClustering.hasOwnProperty(id)) {
+				layer = this._needsClustering[id];
+
+				//If the layer doesn't have a getLatLng then we can't cluster it, so add it to our child featureGroup
+				if (!layer.getLatLng) {
+					this._featureGroup.addLayer(layer);
+					continue;
+				}
+
+
+				if (layer.__parent) {
+					continue;
+				}
+				this._addLayer(layer, this._maxZoom);
+			}
+		}
+		//this._needsClustering = [];
+		this._needsClustering = {};
 
 
 		this._map.on('zoomend', this._zoomEnd, this);
@@ -963,6 +1007,15 @@ L.MarkerClusterGroup.include(!L.DomUtil.TRANSITION ? {
 		//Could loop all this._layers and do this for each _icon if it stops working
 
 		L.Util.falseFn(document.body.offsetWidth);
+	},
+
+	_generateLayerId: function () {
+		if (L.markerClusterGroup.lastLayerId === undefined) {
+			L.markerClusterGroup.lastLayerId = 1;
+		} else {
+			L.markerClusterGroup.lastLayerId += 1;
+		}
+		return L.markerClusterGroup.lastLayerId;
 	}
 });
 
