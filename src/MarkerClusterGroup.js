@@ -50,6 +50,8 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		this._needsRemoving = {};
 		//The bounds of the currently shown area (from _getExpandedVisibleBounds) Updated on zoom/move
 		this._currentShownBounds = null;
+
+		this._deferredLayersToAdd = [];
 	},
 
 	addLayer: function (layer) {
@@ -405,6 +407,7 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		this._map = map;
 		//var i, l, layer;
 		var id, layer;
+		var self = this;
 
 		if (!isFinite(this._map.getMaxZoom())) {
 			throw "Map has no maxZoom specified";
@@ -442,31 +445,34 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 				if (layer.__parent) {
 					continue;
 				}
-				this._addLayer(layer, this._maxZoom);
+				this._addLayer(layer, this._maxZoom, true);
 			}
 		}
-		//this._needsClustering = [];
-		this._needsClustering = {};
+		this._addAllDeferredLayers(function () {
+
+			//this._needsClustering = [];
+			self._needsClustering = {};
 
 
-		this._map.on('zoomend', this._zoomEnd, this);
-		this._map.on('moveend', this._moveEnd, this);
+			self._map.on('zoomend', self._zoomEnd, self);
+			self._map.on('moveend', self._moveEnd, self);
 
-		if (this._spiderfierOnAdd) { //TODO FIXME: Not sure how to have spiderfier add something on here nicely
-			this._spiderfierOnAdd();
-		}
+			if (self._spiderfierOnAdd) { //TODO FIXME: Not sure how to have spiderfier add something on here nicely
+				self._spiderfierOnAdd();
+			}
 
-		this._bindEvents();
+			self._bindEvents();
 
 
-		//Actually add our markers to the map:
+			//Actually add our markers to the map:
 
-		//Remember the current zoom level and bounds
-		this._zoom = this._map.getZoom();
-		this._currentShownBounds = this._getExpandedVisibleBounds();
+			//Remember the current zoom level and bounds
+			self._zoom = self._map.getZoom();
+			self._currentShownBounds = self._getExpandedVisibleBounds();
 
-		//Make things appear on the map
-		this._topClusterLevel._recursivelyAddChildrenToMap(null, this._zoom, this._currentShownBounds);
+			//Make things appear on the map
+			self._topClusterLevel._recursivelyAddChildrenToMap(null, self._zoom, self._currentShownBounds);
+		});
 	},
 
 	//Overrides FeatureGroup.onRemove
@@ -715,8 +721,36 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		this._topClusterLevel = new L.MarkerCluster(this, -1);
 	},
 
+	// Add layers that were deferred in _addLayer
+	_addAllDeferredLayers: function (callback) {
+		this._addDeferredLayers(0, 10, this._deferredLayersToAdd.length, callback);
+	},
+
+	_addDeferredLayers: function (start, step, max, callback) {
+		var self = this,
+			stop = step + start > max ? max : step + start;
+		for (var i = start; i < stop; i++) {
+			this._addLayer.apply(this, this._deferredLayersToAdd[i]);
+		}
+		this.fire('addinglayers', {added: stop, total: max});
+		if (stop === max) {
+			this._deferredLayersToAdd = [];
+			callback();
+			this.fire('addedlayers');
+		} else {
+			setTimeout(function () {
+				self._addDeferredLayers(start + step, step, max, callback);
+			}, 1);
+		}
+	},
+
 	//Zoom: Zoom to start adding at (Pass this._maxZoom to start at the bottom)
-	_addLayer: function (layer, zoom) {
+	_addLayer: function (layer, zoom, defer) {
+		if (defer === true) {
+			this._deferredLayersToAdd.push([layer, zoom]);
+			return;
+		}
+
 		var gridClusters = this._gridClusters,
 		    gridUnclustered = this._gridUnclustered,
 		    markerPoint, z;
